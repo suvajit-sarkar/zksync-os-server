@@ -15832,6 +15832,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "tokio",
+ "tracing",
  "zksync_os_api",
  "zksync_os_contract_interface",
  "zksync_os_l1_watcher",

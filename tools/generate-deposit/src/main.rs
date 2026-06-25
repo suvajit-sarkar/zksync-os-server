@@ -1,7 +1,5 @@
-use alloy::eips::eip1559::Eip1559Estimation;
 use alloy::network::{EthereumWallet, TxSigner};
 use alloy::primitives::{Address, U256};
-use alloy::providers::utils::Eip1559Estimator;
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::signers::local::LocalSigner;
 use clap::Parser;
@@ -61,19 +59,13 @@ async fn main() -> anyhow::Result<()> {
     // todo: copied over from alloy-zksync, use directly once it is EIP-712 agnostic
     let bridgehub = Bridgehub::new(args.bridgehub, l1_provider.clone(), args.chain_id);
     let gas_limit = 500_000;
-    let max_priority_fee_per_gas = l1_provider.get_max_priority_fee_per_gas().await?;
-    let base_l1_fees_data = l1_provider
-        .estimate_eip1559_fees_with(Eip1559Estimator::new(|base_fee_per_gas, _| {
-            Eip1559Estimation {
-                max_fee_per_gas: base_fee_per_gas * 3 / 2,
-                max_priority_fee_per_gas: 0,
-            }
-        }))
-        .await?;
-    let max_fee_per_gas = base_l1_fees_data.max_fee_per_gas + max_priority_fee_per_gas;
+    let gas_price = l1_provider.get_gas_price().await?;
+    // Use minimum 1 gwei for zero-gas networks (e.g. Besu QBFT POA)
+    // Without this, l2TransactionBaseCost returns 0, causing silent revert
+    let gas_price = gas_price.max(1_000_000_000u128);
     let tx_base_cost = bridgehub
         .l2_transaction_base_cost(
-            max_fee_per_gas + max_priority_fee_per_gas,
+            gas_price,
             gas_limit,
             REQUIRED_L1_TO_L2_GAS_PER_PUBDATA_BYTE,
         )
@@ -89,8 +81,7 @@ async fn main() -> anyhow::Result<()> {
             l1_wallet.default_signer().address(),
         )
         .value(amount + tx_base_cost)
-        .max_fee_per_gas(max_fee_per_gas)
-        .max_priority_fee_per_gas(max_priority_fee_per_gas)
+        .gas_price(gas_price)
         .into_transaction_request();
     let l1_deposit_receipt = l1_provider
         .send_transaction(l1_deposit_request)

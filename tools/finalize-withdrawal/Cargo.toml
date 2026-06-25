@@ -1,0 +1,20 @@
+[package]
+name = "zksync_os_finalize_withdrawal"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+zksync_os_alloy_ext.workspace = true
+zksync_os_contract_interface.workspace = true
+zksync_os_rpc_api.workspace = true
+
+alloy = { workspace = true, default-features = false, features = ["json-rpc", "signer-local", "reqwest", "reqwest-rustls-tls", "network"] }
+anyhow.workspace = true
+tokio = { workspace = true, features = ["full"] }
+clap = { workspace = true, features = ["derive"] }

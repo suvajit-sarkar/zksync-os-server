@@ -214,11 +214,20 @@ pub async fn find_l1_commit_block_by_batch_number(
     batch_number: u64,
     max_l1_blocks_to_scan: u64,
 ) -> anyhow::Result<BlockNumber> {
+    let deployment_block = zk_chain.deployment_block().await?;
+
+    // When no batches have been committed yet there is nothing to scan for: the correct
+    // starting point is the deployment block itself, and there are no batch reverts to
+    // worry about.  Returning early avoids log-scan RPC calls that can fail on nodes
+    // (e.g. Besu) that return `null` for events with empty dynamic fields.
+    if batch_number == 0 {
+        return Ok(deployment_block);
+    }
+
     let is_batch_committed = move |zk: Arc<ZkChain<NodeProvider>>, block: BlockNumber| async move {
         let res = zk.get_total_batches_committed(block.into()).await?;
         Ok(res >= batch_number)
     };
-    let deployment_block = zk_chain.deployment_block().await?;
     // This predicate is not monotonic because committed batches can be reverted. Even then, this
     // binary search will find **some** L1 block that commits our batch. If revert and another commit
     // happen after the found L1 block, then we will find them as handled by logic in the rest of the
@@ -294,6 +303,10 @@ pub async fn find_l1_execute_block_by_batch_number(
     // Execution cannot be reverted, so unlike in `find_l1_commit_block_by_batch_number`, we do not need
     // to take L1 reverts into account here.
     let deployment_block = zk_chain.deployment_block().await?;
+    // No executed batches yet — start from the deployment block.
+    if batch_number == 0 {
+        return Ok(deployment_block);
+    }
     find_l1_block_by_predicate(
         Arc::new(zk_chain),
         deployment_block,

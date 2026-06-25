@@ -151,7 +151,7 @@ impl<T: L2Subpool> Pool<T> {
         if replay.block_context.block_number <= 1 {
             let genesis_upgrade = self.genesis.genesis_upgrade_tx().await;
             let upgrade_tx = UpgradeInfo {
-                tx: Some(genesis_upgrade.tx.clone()),
+                tx: genesis_upgrade.tx.clone(),
                 metadata: UpgradeMetadata {
                     protocol_version: genesis_upgrade.protocol_version.clone(),
                     timestamp: 0, // No restrictions on timestamp.

@@ -115,7 +115,7 @@ impl AdditionalStorageFormat {
 #[derive(Debug, Clone)]
 pub struct GenesisUpgradeTxInfo {
     pub protocol_version: ProtocolSemanticVersion,
-    pub tx: L1UpgradeEnvelope,
+    pub tx: Option<L1UpgradeEnvelope>,
     pub force_deploy_preimages: Vec<(B256, Vec<u8>)>,
 }
 
@@ -168,9 +168,22 @@ impl Genesis {
 
     pub async fn genesis_upgrade_tx(&self) -> &GenesisUpgradeTxInfo {
         self.genesis_upgrade_tx
-            .get_or_try_init(|| load_genesis_upgrade_tx(self.zk_chain.clone()))
+            .get_or_try_init(|| async {
+                let info = match load_genesis_upgrade_tx(self.zk_chain.clone()).await {
+                    Ok(info) => info,
+                    Err(e) => {
+                        tracing::warn!("Failed to load genesis upgrade tx, using default: {e}");
+                        GenesisUpgradeTxInfo {
+                            protocol_version: ProtocolSemanticVersion::new(0, 30, 1),
+                            tx: None,
+                            force_deploy_preimages: vec![],
+                        }
+                    }
+                };
+                Ok::<_, anyhow::Error>(info)
+            })
             .await
-            .expect("Failed to load genesis upgrade transaction")
+            .expect("infallible")
     }
 }
 
@@ -355,21 +368,45 @@ async fn load_genesis_upgrade_tx(
         logs.len() == 1,
         "Expected exactly one genesis upgrade tx log, found these {logs:?}"
     );
-    let sol_event = GenesisUpgrade::decode_log(&logs[0].inner)?.data;
-    let protocol_version = ProtocolSemanticVersion::try_from(sol_event._protocolVersion)
-        .context("Failed to parse protocol version from genesis upgrade tx")?;
-    let upgrade_tx = L1UpgradeEnvelope::try_from(sol_event._l2Transaction)?;
-    let preimages = sol_event
-        ._factoryDeps
-        .into_iter()
-        .map(|preimage| {
-            let preimage = preimage.to_vec();
-            let digest = Blake2s256::digest(&preimage);
-            let mut digest_array = [0u8; 32];
-            digest_array.copy_from_slice(digest.as_slice());
-            (B256::new(digest_array), preimage)
-        })
-        .collect();
+    let log = &logs[0].inner;
+
+    // `_protocolVersion` is an indexed topic so it is always available regardless of whether the
+    // non-indexed data (containing `_l2Transaction`) is well-formed.
+    // topics: [0] = event sig, [1] = _zkChain, [2] = _protocolVersion
+    let raw_version = log
+        .topics()
+        .get(2)
+        .copied()
+        .context("GenesisUpgrade log is missing the _protocolVersion topic")?;
+    let protocol_version =
+        ProtocolSemanticVersion::try_from(U256::from_be_bytes(raw_version.0))
+            .context("Failed to parse protocol version from genesis upgrade tx")?;
+    
+    let (upgrade_tx, preimages) = match GenesisUpgrade::decode_log(log) {
+        Ok(event) => {
+            let data = event.data;
+            let tx = L1UpgradeEnvelope::try_from(data._l2Transaction).ok();
+            let preimages = data
+                ._factoryDeps
+                .into_iter()
+                .map(|preimage| {
+                    let preimage = preimage.to_vec();
+                    let digest = Blake2s256::digest(&preimage);
+                    let mut digest_array = [0u8; 32];
+                    digest_array.copy_from_slice(digest.as_slice());
+                    (B256::new(digest_array), preimage)
+                })
+                .collect();
+            (tx, preimages)
+        }
+        Err(e) => {
+            tracing::warn!(
+                "GenesisUpgrade log data could not be decoded (likely an empty \
+                 _l2Transaction from a zksync-os chain); continuing without upgrade tx: {e}"
+            );
+            (None, vec![])
+        }
+    };
 
     Ok(GenesisUpgradeTxInfo {
         protocol_version,

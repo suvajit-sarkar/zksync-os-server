@@ -312,14 +312,14 @@ impl NodeProvider {
     /// [`Self::deployment_block`] for the `0` fallback semantics.
     async fn discover_deployment_block(&self, address: Address) -> anyhow::Result<u64> {
         let latest = self.get_block_number().await?;
-        let code_at_latest = self.get_code_at(address).block_id(latest.into()).await?;
+        let code_at_latest = Self::get_code_at_tolerant(self, address, latest.into()).await?;
         if code_at_latest.0.is_empty() {
             return Ok(0);
         }
         let (mut lo, mut hi) = (0u64, latest);
         while lo < hi {
             let mid = (lo + hi) / 2;
-            let code = self.get_code_at(address).block_id(mid.into()).await?;
+            let code = Self::get_code_at_tolerant(self, address, mid.into()).await?;
             if !code.0.is_empty() {
                 hi = mid;
             } else {
@@ -328,6 +328,23 @@ impl NodeProvider {
         }
         tracing::debug!(%address, deployment_block = lo, "discovered contract deployment block");
         Ok(lo)
+    }
+
+    /// `eth_getCode` wrapper that treats a JSON-null response (returned by some nodes such as
+    /// Besu for accounts at blocks before they were first created) as empty bytes rather than
+    /// a transport error.
+    async fn get_code_at_tolerant(
+        &self,
+        address: Address,
+        block: BlockId,
+    ) -> anyhow::Result<alloy::primitives::Bytes> {
+        match self.get_code_at(address).block_id(block).await {
+            Ok(code) => Ok(code),
+            Err(e) if e.to_string().contains("invalid type: null") => {
+                Ok(alloy::primitives::Bytes::new())
+            }
+            Err(e) => Err(e.into()),
+        }
     }
 }
 

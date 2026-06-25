@@ -73,9 +73,10 @@ impl PriceApiClient for ForcedPriceClient {
             APIToken::ERC20 { address, .. } => self.erc20_base_ratios.get(address).cloned(),
         };
         let decimals = token.decimals();
-        let Some(base_ratio) = base_ratio else {
-            anyhow::bail!("No forced price configured for token: {:?}", token);
-        };
+        let base_ratio = base_ratio.unwrap_or_else(|| {
+            tracing::debug!("No forced price configured for token: {:?}, defaulting to 1.0", token);
+            TokenApiRatio::from_f64_decimals_and_timestamp(1.0, 0, None).ratio
+        });
         let mut previous_ratios = self
             .previous_ratios
             .lock()
